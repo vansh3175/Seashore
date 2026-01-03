@@ -1,19 +1,19 @@
 /* eslint-disable no-restricted-globals */
-import { 
-  initRecordingInDB, 
-  saveChunkToDB, 
-  markChunkUploaded, 
+import {
+  initRecordingInDB,
+  saveChunkToDB,
+  markChunkUploaded,
   clearRecordingFromDB,
-  getPendingRecordings, 
-  getRecordingChunks    
+  getPendingRecordings,
+  getRecordingChunks
 } from '../utils/db';
 
-// Ensure this is an integer to avoid floating point issues with Blob.slice
-const MIN_PART_SIZE = Math.ceil(5.2 * 1024 * 1024); // 5.2 MB
+// 🔒 EXACT size for S3/R2 multipart
+const PART_SIZE = 5 * 1024 * 1024; // 5 MB EXACT
 
 // State
 let uploadId: string | null = null;
-let fullKey: string | null = null;     // studioId/sessionId/userId/recordingId
+let fullKey: string | null = null;
 let recordingId: string | null = null;
 let apiBase: string | null = null;
 
@@ -21,16 +21,16 @@ let apiBase: string | null = null;
 let studioId: string | null = null;
 let sessionId: string | null = null;
 let userId: string | null = null;
-let recordingType: string = "camera"; 
+let recordingType = "camera";
 
-// Buffers
+// Multipart tracking
 let parts: { PartNumber: number; ETag: string }[] = [];
 let partNumber = 1;
 
-// We store the Blob AND its IDB sequence ID so we can mark it as uploaded later
-let buffer: { blob: Blob; id: number }[] = []; 
+// Buffer (raw byte stream)
+let buffer: { blob: Blob; id: number }[] = [];
 let bufferSize = 0;
-let sequenceNumber = 1; // Auto-increment for IDB chunks
+let sequenceNumber = 1;
 
 const inFlightUploads = new Map<number, Promise<void>>();
 let taskQueue: Promise<void> = Promise.resolve();
@@ -43,45 +43,32 @@ self.onmessage = (e: MessageEvent) => {
     sessionId = payload.sessionId;
     userId = payload.userId;
     apiBase = payload.apiBase;
-    recordingType = payload.recordingType || "camera"; 
+    recordingType = payload.recordingType || "camera";
+    taskQueue = taskQueue.then(() => initializeUpload(payload.startedAt));
+  }
 
-    taskQueue = taskQueue.then(() =>
-      initializeUpload(payload.startedAt)
-    );
-
-  } else if (type === "ADD_CHUNK") {
+  if (type === "ADD_CHUNK") {
     taskQueue = taskQueue.then(() => handleNewChunk(payload.blob));
+  }
 
-  } else if (type === "FINALIZE") {
+  if (type === "FINALIZE") {
     taskQueue = taskQueue.then(() =>
       completeUpload(payload.endedAt, payload.duration)
     );
-  } 
-  else if (type === "RECOVER") {
+  }
+
+  if (type === "RECOVER") {
     apiBase = payload.apiBase;
     taskQueue = taskQueue.then(() => handleRecover(payload.sessionId));
   }
 
-  taskQueue = taskQueue.catch((err: any) => {
+  taskQueue = taskQueue.catch(err => {
     self.postMessage({ type: "ERROR", error: err?.message || String(err) });
   });
 };
 
 // ----------------------------------------------
-// Helpers
-// ----------------------------------------------
-
-async function safeJson(res: Response) {
-  const text = await res.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    return {};
-  }
-}
-
-// ----------------------------------------------
-// 1️⃣ INIT — Create DB row + get uploadId
+// INIT
 // ----------------------------------------------
 async function initializeUpload(startedAt: string) {
   const res = await fetch(`${apiBase}/api/upload`, {
@@ -91,287 +78,206 @@ async function initializeUpload(startedAt: string) {
       action: "INIT",
       studioId,
       sessionId,
-      userId, 
-      type: recordingType, 
+      userId,
+      type: recordingType,
       startedAt
     })
   });
 
-  if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Init failed: ${err}`);
-  }
-
-  const data = await safeJson(res);
-  
-  if (!data.uploadId || !data.recordingId || !data.fullKey)
-    throw new Error("Failed to initialize upload: Missing keys in response");
+  if (!res.ok) throw new Error(await res.text());
+  const data = await res.json();
 
   uploadId = data.uploadId;
   recordingId = data.recordingId;
   fullKey = data.fullKey;
 
-  // Reset upload state
   parts = [];
   partNumber = 1;
   buffer = [];
   bufferSize = 0;
   sequenceNumber = 1;
 
-  if (recordingId && uploadId && fullKey) {
-    await initRecordingInDB(recordingId, uploadId, fullKey);
-  }
+  await initRecordingInDB(recordingId!, uploadId!, fullKey!);
 
-  self.postMessage({
-    type: "INIT_SUCCESS",
-    uploadId,
-    recordingId,
-    fullKey
-  });
+  self.postMessage({ type: "INIT_SUCCESS", uploadId, recordingId, fullKey });
 }
 
 // ----------------------------------------------
-// 2️⃣ Handle Chunk Buffering
+// ADD CHUNK
 // ----------------------------------------------
 async function handleNewChunk(blob: Blob) {
   if (!blob.size) return;
 
-  const currentSeqId = sequenceNumber++;
+  const id = sequenceNumber++;
+  await saveChunkToDB(recordingId!, id, blob);
 
-  if (recordingId) {
-    await saveChunkToDB(recordingId, currentSeqId, blob);
-  }
-
-  buffer.push({ blob, id: currentSeqId });
+  buffer.push({ blob, id });
   bufferSize += blob.size;
 
-  // Slice and upload as long as we have enough data for a 5.2MB part
-  // This ensures every non-trailing part uploaded is exactly MIN_PART_SIZE
-  while (bufferSize >= MIN_PART_SIZE) {
-    await uploadBufferAsPart(false, false);
+  // Upload STRICT 5MB parts
+  while (bufferSize >= PART_SIZE) {
+    await uploadExactPart(false);
   }
 }
 
 // ----------------------------------------------
-// Helper: Upload Accumulated Buffer
+// CORE: upload EXACT PART_SIZE
 // ----------------------------------------------
-async function uploadBufferAsPart(throwError = false, isFinal = false) {
-  if (buffer.length === 0) return;
+async function uploadExactPart(throwError: boolean) {
+  let size = 0;
+  const blobs: Blob[] = [];
+  const ids: number[] = [];
 
-  // 1. Consolidate blobs
-  const allBlobs = buffer.map(b => b.blob);
-  const compositeBlob = new Blob(allBlobs);
-  
-  // If not final and not enough data, stop
-  if (!isFinal && compositeBlob.size < MIN_PART_SIZE) {
-      return;
+  while (buffer.length && size < PART_SIZE) {
+    const item = buffer[0];
+
+    if (size + item.blob.size <= PART_SIZE) {
+      blobs.push(item.blob);
+      ids.push(item.id);
+      size += item.blob.size;
+      buffer.shift();
+    } else {
+      // partial chunk → discard remainder intentionally
+      const take = PART_SIZE - size;
+      blobs.push(item.blob.slice(0, take));
+      ids.push(item.id);
+      buffer.shift();
+      size = PART_SIZE;
+    }
   }
 
-  let blobToUpload: Blob;
-  let remainder: Blob | null = null;
+  bufferSize -= PART_SIZE;
 
-  // 2. Slice EXACTLY MIN_PART_SIZE if not final
-  // This ensures all non-trailing parts are uniform (5.2 MB)
-  if (!isFinal && compositeBlob.size >= MIN_PART_SIZE) {
-    blobToUpload = compositeBlob.slice(0, MIN_PART_SIZE);
-    remainder = compositeBlob.slice(MIN_PART_SIZE);
-  } else {
-    // Final part can be any size (S3 rules allow this)
-    blobToUpload = compositeBlob;
-  }
-
-  // 3. Collect IDs to mark as "uploaded" in local DB
-  // Note: Since we might slice mid-blob, marking IDs as uploaded is an approximation
-  // unless we track byte ranges. For simplicity, we mark chunks involved.
-  const idsToMark = buffer.map(b => b.id).filter(id => id !== -1);
-
-  // 4. Update Buffer with Remainder
-  buffer = [];
-  bufferSize = 0;
-
-  if (remainder && remainder.size > 0) {
-    // We store -1 as ID because this remainder corresponds to 
-    // a fraction of previous chunks, so we can't map it 1-to-1 to a sequence ID.
-    // This is a trade-off for strict slicing logic.
-    buffer.push({ blob: remainder, id: -1 });
-    bufferSize = remainder.size;
-  }
-
-  // 5. Upload
   try {
-    await uploadStrictPart(blobToUpload, idsToMark);
-  } catch (err) {
-    if (throwError) throw err;
-    console.error("Soft failure uploading part during stream:", err);
-    // We swallow error during streaming so the recorder doesn't crash.
-    // The data is safe in IDB and will be picked up by Recovery.
+    await uploadStrictPart(new Blob(blobs), ids);
+  } catch (e) {
+    if (throwError) throw e;
+    console.error("Soft upload failure:", e);
   }
 }
 
 // ----------------------------------------------
-// Upload Part to S3
+// UPLOAD SINGLE PART
 // ----------------------------------------------
-async function uploadStrictPart(blob: Blob, chunkIds: number[] = []) {
-  const thisPart = partNumber++;
+async function uploadStrictPart(blob: Blob, chunkIds: number[]) {
+  const currentPart = partNumber++;
 
-  const uploadPromise = (async () => {
+  const promise = (async () => {
     const res = await fetch(`${apiBase}/api/upload`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "PART",
-        fullKey,
         uploadId,
-        partNumber: thisPart,
+        fullKey,
+        partNumber: currentPart,
         recordingId
       })
     });
 
     if (!res.ok) throw new Error("Failed to get signed URL");
+    const { signedUrl } = await res.json();
 
-    const data = await res.json();
-    const signedUrl = data.signedUrl;
+    const putRes = await fetch(signedUrl, { method: "PUT", body: blob });
+    if (!putRes.ok) throw new Error("PUT failed");
 
-    const putRes = await fetch(signedUrl, {
-      method: "PUT",
-      body: blob,
-    });
+    const etag = (putRes.headers.get("ETag") || "").replace(/"/g, "");
+    parts.push({ PartNumber: currentPart, ETag: etag });
 
-    if (!putRes.ok) throw new Error(`Part upload failed: ${putRes.statusText}`);
-
-    const eTag = (putRes.headers.get("ETag") || "").replace(/"/g, "");
-    parts.push({ PartNumber: thisPart, ETag: eTag });
-
-    if (recordingId && chunkIds.length > 0) {
-      for (const id of chunkIds) {
-        await markChunkUploaded(recordingId, id, eTag);
-      }
+    for (const id of chunkIds) {
+      await markChunkUploaded(recordingId!, id, etag);
     }
 
-    self.postMessage({
-      type: "PART_UPLOADED",
-      partNumber: thisPart
-    });
+    self.postMessage({ type: "PART_UPLOADED", partNumber: currentPart });
   })();
 
-  inFlightUploads.set(thisPart, uploadPromise);
-  uploadPromise.finally(() => inFlightUploads.delete(thisPart));
-
-  return uploadPromise;
+  inFlightUploads.set(currentPart, promise);
+  promise.finally(() => inFlightUploads.delete(currentPart));
+  return promise;
 }
 
 // ----------------------------------------------
-// 3️⃣ FINALIZE — Complete upload + update DB
+// FINALIZE
 // ----------------------------------------------
 async function completeUpload(endedAt?: string, duration?: number) {
-  if (!uploadId || !fullKey || !apiBase) return;
-
-  // 1. Upload leftover buffer as the final part
-  if (buffer.length > 0) {
-    try {
-        await uploadBufferAsPart(true, true); // throwError = true, isFinal = true
-    } catch (e) {
-        console.error("Failed to upload last part, retrying once...", e);
-        await new Promise(r => setTimeout(r, 1000));
-        throw new Error("Failed to upload final part. Please try Recovery.");
-    }
+  // Final part (ONLY ONE allowed to be smaller)
+  if (bufferSize > 0) {
+    await uploadStrictPart(
+      new Blob(buffer.map(b => b.blob)),
+      buffer.map(b => b.id)
+    );
+    buffer = [];
+    bufferSize = 0;
   }
 
-  // 2. Wait for pending uploads
-  if (inFlightUploads.size > 0) {
+  if (inFlightUploads.size) {
     await Promise.all(inFlightUploads.values());
   }
 
-  // 3. Sort Parts
-  const sortedParts = parts.sort((a, b) => a.PartNumber - b.PartNumber);
-
-  if (sortedParts.length === 0) {
-      throw new Error("No parts uploaded. Cannot finalize empty file.");
-  }
-
-  // 4. Call Complete
   const res = await fetch(`${apiBase}/api/upload`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       action: "COMPLETE",
-      fullKey,
       uploadId,
-      parts: sortedParts,
+      fullKey,
       recordingId,
-      endedAt: endedAt || new Date().toISOString(), 
+      parts: parts.sort((a, b) => a.PartNumber - b.PartNumber),
+      endedAt: endedAt || new Date().toISOString(),
       duration: duration || 0
     })
   });
 
-  if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(`Complete failed: ${txt}`);
-  }
+  if (!res.ok) throw new Error(await res.text());
 
-  const data = await safeJson(res);
-
-  // 5. Cleanup IDB
-  if (recordingId) {
-    await clearRecordingFromDB(recordingId);
-  }
-
-  self.postMessage({
-    type: "UPLOAD_COMPLETE",
-    location: data.location,
-    recordingId
-  });
-
+  await clearRecordingFromDB(recordingId!);
+  self.postMessage({ type: "UPLOAD_COMPLETE", recordingId });
   resetState();
 }
 
 // ----------------------------------------------
-// 4️⃣ RECOVER — Restore from IDB
+// RECOVERY
 // ----------------------------------------------
 async function handleRecover(targetSessionId: string) {
   const recordings = await getPendingRecordings();
   const session = recordings.find(r => r.sessionId === targetSessionId);
-
-  if (!session) {
-    throw new Error("No local recovery data found for this session.");
-  }
+  if (!session) throw new Error("No recovery data");
 
   uploadId = session.uploadId;
   fullKey = session.s3Key;
   recordingId = session.sessionId;
+
   parts = [];
   partNumber = 1;
   buffer = [];
   bufferSize = 0;
 
-  const allChunks = await getRecordingChunks(recordingId);
-  
-  // Sort by partNumber
-  allChunks.sort((a, b) => a.partNumber - b.partNumber);
+  const chunks = await getRecordingChunks(recordingId);
+  chunks.sort((a, b) => a.partNumber - b.partNumber);
 
-  for (const chunk of allChunks) {
+  for (const chunk of chunks) {
+    if (chunk.etag) continue;
+
     buffer.push({ blob: chunk.blob, id: chunk.partNumber });
     bufferSize += chunk.blob.size;
 
-    // Use loop to slice strictly if recovering large chunks
-    while (bufferSize >= MIN_PART_SIZE) {
-      await uploadBufferAsPart(true, false);
+    while (bufferSize >= PART_SIZE) {
+      await uploadExactPart(true);
     }
   }
 
-  // Upload any remainder as final part
   await completeUpload();
 }
 
+// ----------------------------------------------
 function resetState() {
   uploadId = null;
   fullKey = null;
   recordingId = null;
-  studioId = null; 
   parts = [];
-  partNumber = 1;
   buffer = [];
   bufferSize = 0;
+  partNumber = 1;
   sequenceNumber = 1;
   inFlightUploads.clear();
 }
