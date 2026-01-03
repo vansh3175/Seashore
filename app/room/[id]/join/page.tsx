@@ -15,10 +15,10 @@ import {
   VideoConference, 
   useRoomContext,
   useConnectionState, 
-  useLocalParticipant, // Keeps track of mute status
+  useLocalParticipant, 
 } from '@livekit/components-react';
 import '@livekit/components-styles';
-import { saveChunkToDB } from '@/utils/db'; 
+// import { saveChunkToDB } from '@/utils/db'; // Ensure this path matches your project structure
 
 import { Inter } from 'next/font/google';
 import { 
@@ -65,14 +65,11 @@ function ActiveSession({
   const room = useRoomContext();
   const connectionState = useConnectionState();
   
-  // 1. Get real-time status (Reacts instantly when user clicks mute buttons)
   const { isCameraEnabled, isMicrophoneEnabled } = useLocalParticipant();
 
   const [isPublished, setIsPublished] = useState(false);
   const publishingRef = useRef(false);
 
-  // 2. Initialize Canvas Stream (The "Safe" Recording Stream)
-  // This stream handles the Avatar placeholder when camera is off
   const recStream = useCanvasStream({
     mediaStream: userStream,
     isVideoEnabled: isCameraEnabled, 
@@ -80,14 +77,13 @@ function ActiveSession({
     participantName: participantName || "Guest",
   });
 
-  // 3. Lift the stream to Parent (so MediaRecorder can access it)
   useEffect(() => {
     if (recStream) {
         setRecordingStream(recStream);
     }
   }, [recStream, setRecordingStream]);
 
-  // 4. Debug Connection
+  // Debug Connection
   useEffect(() => {
     console.log("📡 LiveKit Connection State:", connectionState);
     if (connectionState === ConnectionState.Connected) {
@@ -98,7 +94,7 @@ function ActiveSession({
     }
   }, [connectionState, room.name, studioId]);
 
-  // 5. Handle Metadata Changes (Sync Recording State)
+  // Handle Metadata Changes (Sync Recording State)
   useEffect(() => {
     if (!room) return;
     const handleMetadataChange = () => {
@@ -115,7 +111,7 @@ function ActiveSession({
     };
   }, [room, isRecording, startRecording, stopRecording, recStream]);
 
-  // 6. Handle Disconnects (Safely Stop Recording)
+  // Handle Disconnects (Safely Stop Recording)
   useEffect(() => {
     if (!room) return;
 
@@ -124,16 +120,12 @@ function ActiveSession({
       
       let performRedirect = true;
 
-      // A. If recording, STOP properly first.
-      // This forces the MediaRecorder to flush the final buffer to the Worker.
-      // The Worker then saves this final chunk to IndexedDB.
       if (isRecording) {
         console.warn("⚠️ Disconnected while recording! Stopping recorder to finalize file...");
         stopRecording(); 
-        performRedirect = false; // Don't kill the page yet, let the worker finish.
+        performRedirect = false; 
       }
 
-      // B. Log to Server
       if (participantId) {
         fetch('/api/connection-log', {
           method: 'POST',
@@ -143,7 +135,6 @@ function ActiveSession({
         });
       }
 
-      // C. Redirect only if we didn't just stop a recording (which needs time)
       if (performRedirect && connectionState === ConnectionState.Connected) {
          window.location.href = "/ended";
       }
@@ -161,7 +152,7 @@ function ActiveSession({
     };
   }, [room, participantId, connectionState, isRecording, stopRecording]);
 
-  // 7. Publish Tracks (Send Raw Camera/Mic to other users)
+  // Publish Tracks
   useEffect(() => {
     if (!room || isPublished || publishingRef.current) return;
 
@@ -180,6 +171,7 @@ function ActiveSession({
         );
 
         if (rawVideoTrack && !isVideoPublished) {
+          // [OPTIMIZATION] Simulcast is crucial for mobile clients viewing this stream
           await room.localParticipant.publishTrack(new LocalVideoTrack(rawVideoTrack.clone()), {
             simulcast: true, name: 'camera-1080p', source: Track.Source.Camera,
           });
@@ -279,7 +271,6 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const workerRef = useRef<Worker | null>(null);
   
-  // This state holds the synthesized stream from the child ActiveSession
   const [recordingStream, setRecordingStream] = useState<MediaStream|null>(null);
 
   // 1. SESSION STATE CHECK
@@ -338,14 +329,19 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
     checkSession();
   }, [studioId, isAuthLoaded, user]);
 
-  // 2. Initialize Camera
+  // 2. Initialize Camera (OPTIMIZED FOR MOBILE)
   useEffect(() => {
     const startCamera = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: 30 },
-          audio: true
-        });
+        const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+        
+        // [FIX] Use lighter constraints for mobile to prevent encoding lag
+        const constraints = isMobile 
+          ? { video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 24 } }, audio: true }
+          : { video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } }, audio: true };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        
         setActiveStream(stream);
         setIsLoading(false);
       } catch (err) { 
@@ -371,23 +367,19 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
       if (type === 'PART_UPLOADED') setUploadStatus(`Uploaded Part ${partNumber}`);
       if (type === 'UPLOAD_COMPLETE') {
           setUploadStatus('Upload Complete');
-          // Optional: You could redirect here if you want auto-redirect after safe upload
-          // if (isRecording === false) window.location.href = "/ended";
       }
       if (type === 'ERROR') setUploadStatus(`Error: ${error}`);
     };
     return () => workerRef.current?.terminate();
-  }, []); // Removed isRecording dep to keep worker stable
+  }, []); 
 
   // 4. Force Stop on Tab Close (Safety Net)
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
         if (isRecording) {
-            // A. Trigger Browser Confirmation "Are you sure?"
             e.preventDefault();
             e.returnValue = '';
             
-            // B. Try to stop recorder (Best effort)
             if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
                 mediaRecorderRef.current.stop();
             }
@@ -482,18 +474,32 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
       }
     });
 
-    const mimeType = MediaRecorder.isTypeSupported("video/webm; codecs=vp9")
-      ? "video/webm; codecs=vp9"
-      : "video/webm";
+    // [FIX] Optimized MimeType Selection for Mobile
+    const getBestMimeType = () => {
+        // Order of preference: H.264 (hardware) -> VP8 (lighter) -> VP9 (heavy)
+        const types = [
+            "video/webm; codecs=h264",
+            "video/mp4; codecs=h264", // Safari
+            "video/webm; codecs=vp8",
+            "video/webm; codecs=vp9",
+            "video/webm"
+        ];
+        for (const type of types) {
+            if (MediaRecorder.isTypeSupported(type)) return type;
+        }
+        return "video/webm";
+    };
+
+    const mimeType = getBestMimeType();
+    console.log(`🎙️ Starting recorder with mimeType: ${mimeType}`);
 
     const recorder = new MediaRecorder(recordingStream, {
       mimeType,
-      videoBitsPerSecond: 2500000
+      videoBitsPerSecond: 2500000 // 2.5 Mbps is good for 720p/1080p
     });
 
     recorder.ondataavailable = async (event) => {
       if (event.data.size > 0) {
-        // Send to worker. Worker handles IDB saving internally.
         workerRef.current?.postMessage({
           type: "ADD_CHUNK",
           payload: { blob: event.data }
@@ -527,7 +533,6 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
     setUploadStatus("Finalizing...");
   };
 
-  // 7. Render Helpers
   const getStatusText = () => {
     if (sessionStatus === 'checking' || isChecking) return "Connecting to studio details...";
     if (sessionStatus === 'error') return "Unable to find this studio.";
@@ -592,7 +597,6 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
     );
   };
 
-  // --- RENDER: ACTIVE ROOM ---
   if (token && activeStream && participantId) {
     if (!process.env.NEXT_PUBLIC_LIVEKIT_URL) {
         return <div className="h-screen flex items-center justify-center text-red-500">Configuration Error: Missing LiveKit URL</div>;
@@ -637,118 +641,109 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
     );
   }
 
-  // --- RENDER: GREEN ROOM (LOBBY) ---
-return (
-  <div className="h-[100dvh] bg-[#050810] text-white flex flex-col overflow-hidden">
-    
-    {/* HEADER */}
-    <header className="h-14 md:h-16 shrink-0 flex items-center justify-between px-4 md:px-6 border-b border-white/5">
-      <div className="flex items-center gap-3 md:gap-4">
-        <Link href="/studio" className="text-gray-400 hover:text-white transition-colors">
-          <ArrowLeft className="w-5 h-5 md:w-6 md:h-6" />
-        </Link>
-        <div className="flex items-center gap-2 font-bold text-base md:text-lg tracking-tight">
-          <Waves className="w-5 h-5 md:w-6 md:h-6 text-[#3CE8FF]" />
-          <span className="text-slate-400">Check your gear</span>
+  return (
+    <div className="h-[100dvh] bg-[#050810] text-white flex flex-col overflow-hidden">
+      
+      <header className="h-14 md:h-16 shrink-0 flex items-center justify-between px-4 md:px-6 border-b border-white/5">
+        <div className="flex items-center gap-3 md:gap-4">
+          <Link href="/studio" className="text-gray-400 hover:text-white transition-colors">
+            <ArrowLeft className="w-5 h-5 md:w-6 md:h-6" />
+          </Link>
+          <div className="flex items-center gap-2 font-bold text-base md:text-lg tracking-tight">
+            <Waves className="w-5 h-5 md:w-6 md:h-6 text-[#3CE8FF]" />
+            <span className="text-slate-400">Check your gear</span>
+          </div>
         </div>
-      </div>
-    </header>
+      </header>
 
-    {/* MAIN */}
-    <main className="flex-1 overflow-hidden flex items-center justify-center px-4 md:px-6">
-      <div className="w-full max-w-7xl h-full grid lg:grid-cols-3 gap-4 md:gap-8 items-center">
+      <main className="flex-1 overflow-hidden flex items-center justify-center px-4 md:px-6">
+        <div className="w-full max-w-7xl h-full grid lg:grid-cols-3 gap-4 md:gap-8 items-center">
 
-        {/* LEFT: VIDEO PREVIEW */}
-        <div className="lg:col-span-2 w-[93vw]  sm:w-full flex flex-col justify-center gap-3">
-          <div className="relative w-full h-[55vh]  sm:h-[60vh] lg:h-[65vh] bg-black rounded-2xl md:rounded-3xl overflow-hidden border border-white/10 shadow-2xl">
+          <div className="lg:col-span-2 w-[93vw]  sm:w-full flex flex-col justify-center gap-3">
+            <div className="relative w-full h-[55vh]  sm:h-[60vh] lg:h-[65vh] bg-black rounded-2xl md:rounded-3xl overflow-hidden border border-white/10 shadow-2xl">
 
-            {isLoading ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
-                <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-                <p className="text-xs text-gray-500">Starting Camera...</p>
-              </div>
-            ) : (
-              <>
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className={`w-full h-full object-cover -scale-x-100 transition-opacity duration-500 ${
-                    isVideoOff ? "opacity-0" : "opacity-100"
-                  }`}
-                />
-
-                {/* CAMERA OFF OVERLAY */}
-                <div
-                  className={`absolute inset-0 flex flex-col items-center justify-center bg-[#0F131F] transition-opacity duration-500 ${
-                    isVideoOff ? "opacity-100" : "opacity-0 pointer-events-none"
-                  }`}
-                >
-                  <VideoOff className="w-12 h-12 text-slate-500 mb-4" />
-                  <p className="text-slate-500 font-medium">Camera is off</p>
+              {isLoading ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                  <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+                  <p className="text-xs text-gray-500">Starting Camera...</p>
                 </div>
+              ) : (
+                <>
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className={`w-full h-full object-cover -scale-x-100 transition-opacity duration-500 ${
+                      isVideoOff ? "opacity-0" : "opacity-100"
+                    }`}
+                  />
 
-                {/* CONTROLS */}
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 p-2 rounded-2xl bg-black/50 backdrop-blur-xl border border-white/10">
-                  <button
-                    onClick={() => setIsMuted(!isMuted)}
-                    className={`p-3 rounded-xl transition-all ${
-                      isMuted
-                        ? "bg-red-500/20 text-red-500"
-                        : "bg-white/10 text-white hover:bg-white/20"
+                  <div
+                    className={`absolute inset-0 flex flex-col items-center justify-center bg-[#0F131F] transition-opacity duration-500 ${
+                      isVideoOff ? "opacity-100" : "opacity-0 pointer-events-none"
                     }`}
                   >
-                    {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-                  </button>
+                    <VideoOff className="w-12 h-12 text-slate-500 mb-4" />
+                    <p className="text-slate-500 font-medium">Camera is off</p>
+                  </div>
 
-                  <button
-                    onClick={() => setIsVideoOff(!isVideoOff)}
-                    className={`p-3 rounded-xl transition-all ${
-                      isVideoOff
-                        ? "bg-red-500/20 text-red-500"
-                        : "bg-white/10 text-white hover:bg-white/20"
-                    }`}
-                  >
-                    {isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
-                  </button>
-                </div>
-              </>
-            )}
+                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 p-2 rounded-2xl bg-black/50 backdrop-blur-xl border border-white/10">
+                    <button
+                      onClick={() => setIsMuted(!isMuted)}
+                      className={`p-3 rounded-xl transition-all ${
+                        isMuted
+                          ? "bg-red-500/20 text-red-500"
+                          : "bg-white/10 text-white hover:bg-white/20"
+                      }`}
+                    >
+                      {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                    </button>
+
+                    <button
+                      onClick={() => setIsVideoOff(!isVideoOff)}
+                      className={`p-3 rounded-xl transition-all ${
+                        isVideoOff
+                          ? "bg-red-500/20 text-red-500"
+                          : "bg-white/10 text-white hover:bg-white/20"
+                      }`}
+                    >
+                      {isVideoOff ? <VideoOff className="w-5 h-5" /> : <Video className="w-5 h-5" />}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="flex justify-between px-2 text-xs md:text-sm text-gray-500 font-medium">
+              <span className="flex items-center gap-2 truncate">
+                <Camera className="w-4 h-4" />
+                {activeStream?.getVideoTracks()[0]?.label || "Camera"}
+              </span>
+              <span className="flex items-center gap-2 truncate">
+                <Mic className="w-4 h-4" />
+                {activeStream?.getAudioTracks()[0]?.label || "Mic"}
+              </span>
+            </div>
           </div>
 
-          {/* DEVICE INFO */}
-          <div className="flex justify-between px-2 text-xs md:text-sm text-gray-500 font-medium">
-            <span className="flex items-center gap-2 truncate">
-              <Camera className="w-4 h-4" />
-              {activeStream?.getVideoTracks()[0]?.label || "Camera"}
-            </span>
-            <span className="flex items-center gap-2 truncate">
-              <Mic className="w-4 h-4" />
-              {activeStream?.getAudioTracks()[0]?.label || "Mic"}
-            </span>
+          <div className="w-full flex flex-col justify-center gap-4 lg:gap-6">
+            <div>
+              <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight">
+                {isHost ? "Welcome, Host" : "Ready to join?"}
+              </h1>
+              <p className="text-gray-400 text-base md:text-lg mt-2">
+                {getStatusText()}
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              {renderActionSection()}
+            </div>
           </div>
+
         </div>
-
-        {/* RIGHT: JOIN PANEL */}
-        <div className="w-full flex flex-col justify-center gap-4 lg:gap-6">
-          <div>
-            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight">
-              {isHost ? "Welcome, Host" : "Ready to join?"}
-            </h1>
-            <p className="text-gray-400 text-base md:text-lg mt-2">
-              {getStatusText()}
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            {renderActionSection()}
-          </div>
-        </div>
-
-      </div>
-    </main>
-  </div>
-);
-
+      </main>
+    </div>
+  );
 }
