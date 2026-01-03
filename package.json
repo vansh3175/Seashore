@@ -18,7 +18,7 @@
     "@livekit/components-styles": "^1.2.0",
     "@mui/material": "^7.3.6",
     "@mui/x-date-pickers": "^8.21.0",
-    "@prisma/client": "^6.19.0",
+    "@prisma/client": "5.22.0",
     "axios": "^1.13.2",
     "dayjs": "^1.11.19",
     "idb": "^8.0.3",
@@ -38,7 +38,7 @@
     "baseline-browser-mapping": "^2.8.32",
     "eslint": "^9",
     "eslint-config-next": "16.0.4",
-    "prisma": "^6.19.0",
+    "prisma": "5.22.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

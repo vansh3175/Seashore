@@ -10,7 +10,8 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url       = env("DATABASE_URL") // Uses port 6543 (Pooler)
+  directUrl = env("DIRECT_URL")   // Uses port 5432 (Direct)
 }
 
 // 1. THE HOST (Synced from Clerk)
