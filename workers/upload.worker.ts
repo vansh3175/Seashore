@@ -8,7 +8,7 @@ import {
 
 const PART_SIZE = 5 * 1024 * 1024; // EXACT 5MB
 
-// State
+// Upload state
 let uploadId: string | null = null;
 let fullKey: string | null = null;
 let recordingId: string | null = null;
@@ -23,8 +23,8 @@ let recordingType = "camera";
 // Data
 let buffer: { blob: Blob; id: number }[] = [];
 let bufferSize = 0;
-let totalBytes = 0;
 let sequenceNumber = 1;
+let totalBytesRecorded = 0;
 
 // Multipart
 let multipartStarted = false;
@@ -49,7 +49,9 @@ self.onmessage = (e: MessageEvent) => {
   }
 
   if (type === "FINALIZE") {
-    taskQueue = taskQueue.then(() => finalize(payload.endedAt, payload.duration));
+    taskQueue = taskQueue.then(() =>
+      finalize(payload.startedAt, payload.endedAt, payload.duration)
+    );
   }
 
   taskQueue = taskQueue.catch(err =>
@@ -63,7 +65,7 @@ self.onmessage = (e: MessageEvent) => {
 async function handleChunk(blob: Blob) {
   if (!blob.size) return;
 
-  totalBytes += blob.size;
+  totalBytesRecorded += blob.size;
 
   const id = sequenceNumber++;
   await saveChunkToDB(sessionId!, id, blob);
@@ -71,8 +73,8 @@ async function handleChunk(blob: Blob) {
   buffer.push({ blob, id });
   bufferSize += blob.size;
 
-  // 🚀 Start multipart ONLY when we cross 5MB
-  if (!multipartStarted && bufferSize >= PART_SIZE) {
+  // Start multipart only when size ≥ 5MB
+  if (!multipartStarted && totalBytesRecorded >= PART_SIZE) {
     await startMultipart();
   }
 
@@ -112,7 +114,7 @@ async function startMultipart() {
 }
 
 // ----------------------------------------------
-// UPLOAD EXACT PART
+// UPLOAD EXACT 5MB PART
 // ----------------------------------------------
 async function uploadExactPart() {
   let size = 0;
@@ -168,18 +170,29 @@ async function uploadExactPart() {
 // ----------------------------------------------
 // FINALIZE
 // ----------------------------------------------
-async function finalize(endedAt?: string, duration?: number) {
-
-  // ❌ Backend cannot handle <5MB uploads
+async function finalize(
+  startedAt?: string,
+  endedAt?: string,
+  duration?: number
+) {
+  // SMALL FILE → SINGLE PUT
   if (!multipartStarted) {
-    self.postMessage({
-      type: "ERROR",
-      error: "Recording too small to upload (backend requires ≥ 5MB)"
+    const blob = new Blob(buffer.map(b => b.blob));
+
+    const res = await fetch(`${apiBase}/api/upload/single`, {
+      method: "PUT",
+      headers: { "Content-Type": "video/webm" },
+      body: blob
     });
+
+    if (!res.ok) throw new Error("Single upload failed");
+
+    await clearRecordingFromDB(sessionId!);
+    self.postMessage({ type: "UPLOAD_COMPLETE", recordingId: null });
     return;
   }
 
-  // Final part
+  // Final multipart part
   if (bufferSize > 0) {
     const res = await fetch(`${apiBase}/api/upload`, {
       method: "POST",
@@ -194,6 +207,7 @@ async function finalize(endedAt?: string, duration?: number) {
     });
 
     const { signedUrl } = await res.json();
+
     const putRes = await fetch(signedUrl, {
       method: "PUT",
       body: new Blob(buffer.map(b => b.blob))
