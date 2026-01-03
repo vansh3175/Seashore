@@ -2,10 +2,12 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/utils/prisma';
+import { getPrisma } from '@/utils/prisma';
 import { auth } from '@clerk/nextjs/server';
 
 export async function GET(req: NextRequest) {
+    const prisma = getPrisma();
+
     const {userId} = await auth();
     if(!userId){
         return NextResponse.json({error: "Unauthorized"}, {status: 401});
@@ -37,6 +39,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest){
+    const prisma = getPrisma();
+
     const {userId} = await auth();
     if(!userId){
         return NextResponse.json({error: "Unauthorized"}, {status: 401});

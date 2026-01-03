@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 import { NextResponse } from 'next/server';
-import { prisma as db } from '@/utils/prisma';
+import { getPrisma } from '@/utils/prisma';
 import dayjs from 'dayjs';
 
 // GET /api/studio/[id]/schedule?month=YYYY-MM
@@ -10,6 +10,8 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const db = getPrisma();
+
   try {
     const { id } = await params; // Studio ID
     const { searchParams } = new URL(request.url);

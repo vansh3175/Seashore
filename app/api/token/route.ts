@@ -3,10 +3,12 @@ export const runtime = "nodejs";
 
 import { AccessToken } from 'livekit-server-sdk';
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/utils/prisma';
+import { getPrisma } from '@/utils/prisma';
 import { currentUser } from '@clerk/nextjs/server';
 
 export async function GET(req: NextRequest) {
+  const prisma = getPrisma();
+
   const room = req.nextUrl.searchParams.get('room');
   const usernameParam = req.nextUrl.searchParams.get('username');
   const isHostParam = req.nextUrl.searchParams.get('isHost');

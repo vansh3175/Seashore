@@ -2,10 +2,11 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 import { NextResponse } from 'next/server';
-import { prisma } from '@/utils/prisma'; // Using your path
-
+import { getPrisma } from '@/utils/prisma';
 // POST: Register or Join a Participant
 export async function POST(req: Request) {
+  const prisma = getPrisma();
+
   try {
     const body = await req.json();
     const { sessionId, identity, name, role } = body;
@@ -45,6 +46,8 @@ export async function POST(req: Request) {
 
 // GET: Find a specific participant
 export async function GET(req: Request) {
+  const prisma = getPrisma();
+
   try {
     const { searchParams } = new URL(req.url);
     const sessionId = searchParams.get('sessionId');
@@ -75,6 +78,8 @@ export async function GET(req: Request) {
 
 // PATCH: Update details (like name change mid-call)
 export async function PATCH(req: Request) {
+  const prisma = getPrisma();
+
   try {
     const body = await req.json();
     const { participantId, name, role } = body;

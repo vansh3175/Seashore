@@ -3,11 +3,14 @@ export const runtime = "nodejs";
 
 import { NextResponse } from 'next/server';
 import { currentUser } from '@clerk/nextjs/server';
-import { prisma } from '@/utils/prisma'; // Ensure this matches your prisma import path
+import { getPrisma } from '@/utils/prisma';
+
 import { roomService } from '@/utils/livekitRoomService';
 
 // GET: Check Session Status (Used by Green Room)
 export async function GET(req: Request) {
+  const prisma = getPrisma();
+
   try {
     const { searchParams } = new URL(req.url);
     const studioId = searchParams.get('studioId');
@@ -82,6 +85,8 @@ export async function GET(req: Request) {
 
 // POST: Create New Session (Instant or Scheduled)
 export async function POST(req: Request) {
+  const prisma = getPrisma();
+
   try {
     const user = await currentUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -132,6 +137,8 @@ export async function POST(req: Request) {
 
 // PATCH: Start or End Session
 export async function PATCH(req: Request) {
+  const prisma = getPrisma();
+
   try {
     const user = await currentUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

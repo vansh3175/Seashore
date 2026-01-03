@@ -2,9 +2,11 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 import { NextResponse } from 'next/server';
-import { prisma } from '@/utils/prisma';
+import { getPrisma } from '@/utils/prisma';
+
 
 export async function POST(req: Request) {
+  const prisma = getPrisma();
   try {
     const body = await req.json();
     const { participantId, event } = body; // event: "joined" or "left"

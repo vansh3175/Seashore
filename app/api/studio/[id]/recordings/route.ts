@@ -2,12 +2,14 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 import { NextResponse } from 'next/server';
-import { prisma } from '@/utils/prisma'; // Use the server-side client
+import { getPrisma } from '@/utils/prisma';
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const prisma = getPrisma();
+
   try {
     const { id } = await params;
 

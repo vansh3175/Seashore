@@ -10,9 +10,11 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/utils/r2"; // Ensure these exist in your project
-import { prisma } from "@/utils/prisma";
+import { getPrisma } from '@/utils/prisma';
 
 export async function POST(req: NextRequest) {
+  const prisma = getPrisma();
+
   try {
     const body = await req.json();
     const {

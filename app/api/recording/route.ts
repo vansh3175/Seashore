@@ -3,10 +3,12 @@ export const runtime = "nodejs";
 
 import { NextResponse } from 'next/server';
 import { currentUser } from '@clerk/nextjs/server';
-import { prisma } from '@/utils/prisma';
+import { getPrisma } from '@/utils/prisma';
 import { roomService } from '@/utils/livekitRoomService';
 
 export async function POST(req: Request) {
+  const prisma = getPrisma();
+
   try {
     const user = await currentUser();
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
