@@ -16,7 +16,7 @@ export function useCanvasStream({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [canvasStream, setCanvasStream] = useState<MediaStream | null>(null);
-  const animationFrameId = useRef<number>();
+  const animationFrameId = useRef<number|null>(null);
 
   // Use refs for mutable state so we don't restart the stream/canvas on toggles
   const isVideoEnabledRef = useRef(isVideoEnabled);
