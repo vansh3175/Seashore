@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+@theme {
+  /* No more Orbitron. Just standard sans. */
+  --font-inter: 'Inter', sans-serif;
+
+  /* Subtle Professional Animations */
+  --animate-pulse-slow: pulseSlow 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-fade-in-up: fadeInUp 0.8s ease-out forwards;
+  --animate-waveform: waveform 1s ease-in-out infinite;
+
+  @keyframes pulseSlow {
+    0%, 100% { opacity: 0.3; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(1.1); }
+  }
+
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes waveform {
+    0%, 100% { height: 20%; }
+    50% { height: 100%; }
+  }
+}
+
+@layer base {
+  body {
+    font-family: var(--font-inter);
+    /* Deep Slate/Blue background */
+    background-color: #0B0F19; 
+    color: #ffffff;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer utilities {
+  /* Simple Stagger delays */
+  .delay-100 { animation-delay: 100ms; }
+  .delay-200 { animation-delay: 200ms; }
+  .delay-300 { animation-delay: 300ms; }
+  .delay-500 { animation-delay: 500ms; }
+}
+@keyframes scan {
+    0% { top: -10%; opacity: 0; }
+    15% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { top: 100%; opacity: 0; }
+  }
+  @keyframes equalizer {
+    0%, 100% { height: 20%; }
+    50% { height: 90%; }
+  }
+
+  /* 4K CARD: Hidden by default, runs on group hover */
+  .scan-line {
+    opacity: 0;
+  }
+  .group:hover .scan-line {
+    animation: scan 2s linear infinite;
+  }
+
+  /* TRACKS CARD: Static by default, runs on group hover */
+  .eq-bar {
+    height: 30%;
+    transition: height 0.3s ease;
+  }
+  .group:hover .eq-bar {
+    animation: equalizer 1s ease-in-out infinite;
+  }
+
+  /* --- CUSTOM SCROLLBAR --- */
+
+/* Firefox */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #1e293b #050810;
+}
+
+/* Chrome, Edge, Safari */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #050810; /* Matches your dark background */
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #334155; /* Slate-700 (Subtle by default) */
+  border-radius: 9999px; /* Fully rounded */
+  border: 2px solid #050810; /* Creates a padding effect around the thumb */
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #3CE8FF; /* Glows Electric Cyan on hover */
+  border-color: #050810;
+}
+
+/* Corner (where horizontal/vertical meet) */
+::-webkit-scrollbar-corner {
+  background: #050810;
+}

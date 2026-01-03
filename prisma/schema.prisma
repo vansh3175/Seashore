@@ -1,0 +1,115 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 1. THE HOST (Synced from Clerk)
+model User {
+  id        String   @id // This will be the Clerk User ID
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  
+  studios   Studio[] // A host can own multiple studios
+}
+
+// 2. THE ROOM (Persistent Container)
+// Example: "The Weekly Tech Talk Studio"
+model Studio {
+  id        String    @id @default(cuid()) // Unique ID for the URL (e.g. seashore.com/room/c123...)
+  name      String
+  ownerId   String
+  owner     User      @relation(fields: [ownerId], references: [id])
+  createdAt DateTime  @default(now())
+  
+  sessions  Session[]
+}
+
+// 3. THE EVENT (A specific meeting instance)
+// Example: "Episode 5 - AI Trends"
+model Session {
+  id          String        @id @default(uuid())
+  studioId    String
+  studio      Studio        @relation(fields: [studioId], references: [id])
+  
+  // Session Details
+  title       String?       // E.g. "Episode 1"
+  scheduledAt DateTime?     // If set, this is a future meeting
+
+  createdAt   DateTime      @default(now())  
+  // Lifecycle Tracking
+  startedAt   DateTime?     // Set when Host clicks "Start Meeting"
+  endedAt     DateTime?     // Set when Host clicks "End Meeting"
+  
+  participants Participant[]
+  recordings   Recording[]
+}
+model Participant {
+  id          String      @id @default(uuid())
+  sessionId   String
+  session     Session     @relation(fields: [sessionId], references: [id])
+  
+  name        String      // "Alex"
+  identity    String      // The unique ID from Clerk or cookie.
+                          // CRITICAL: We use this to find them again if they rejoin.
+  
+  role        String      // "host" | "guest"
+  
+  // Status Tracking
+  status      String      @default("active") // "active", "disconnected", "left"
+  firstJoinedAt DateTime  @default(now())    // When they first appeared
+  lastSeenAt    DateTime  @updatedAt         // Updates every heartbeat (ping)
+
+  leaveAt     DateTime?    // When they explicitly left
+  
+  // One Participant can have MANY recording files (if they rejoin)
+  recordings  Recording[]
+  
+  // Optional: If you want a strict log of every join/leave event
+  events      ConnectionLog[] 
+
+  @@unique([sessionId, identity]) // Prevent duplicate participants in one session
+}
+
+// New Model: Track exactly when they connected/disconnected (Optional but recommended)
+model ConnectionLog {
+  id            String      @id @default(uuid())
+  participantId String
+  participant   Participant @relation(fields: [participantId], references: [id])
+  
+  event         String      // "joined", "left"
+  timestamp     DateTime    @default(now())
+}
+
+model Recording {
+  id            String   @id @default(uuid())
+  participantId String
+  participant   Participant @relation(fields: [participantId], references: [id])
+  
+  sessionId     String
+  session       Session     @relation(fields: [sessionId], references: [id])
+  
+  s3Key         String?
+  fileSize      Int?
+  duration      Float?
+  
+  type          String   // "camera" | "screen"
+  status        String   // "uploading" | "available"
+  
+  // CRITICAL for Syncing:
+  // This tells the editor exactly where this clip belongs on the timeline.
+  startedAt     DateTime @default(now()) 
+  endedAt       DateTime?
+  
+  updatedAt     DateTime @updatedAt
+}
