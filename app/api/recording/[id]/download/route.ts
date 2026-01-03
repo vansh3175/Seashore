@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 import { NextResponse } from 'next/server';
 import { prisma } from '@/utils/prisma';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
