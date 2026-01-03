@@ -240,16 +240,6 @@ async function completeUpload(endedAt?: string, duration?: number) {
         console.error("Failed to upload last part, retrying once...", e);
         // Simple retry logic for the critical last part
         await new Promise(r => setTimeout(r, 1000));
-        // We need to reconstruct the buffer if we cleared it? 
-        // Note: uploadBufferAsPart clears buffer BEFORE upload. 
-        // If it fails, the data is technically "lost" from RAM buffer 
-        // BUT it is safe in IDB. 
-        
-        // Since we are in 'completeUpload', if this fails, we THROW.
-        // This triggers the Worker 'ERROR' message.
-        // This tells the UI "Recovery Failed".
-        // The user can then click "Retry", which triggers 'handleRecover'.
-        // 'handleRecover' reads from IDB (where the data is safe) and retries.
         throw new Error("Failed to upload final part. Please try Recovery.");
     }
   }
@@ -322,15 +312,19 @@ async function handleRecover(targetSessionId: string) {
   bufferSize = 0;
 
   const allChunks = await getRecordingChunks(recordingId);
-  allChunks.sort((a, b) => a.id! - b.id!);
+  
+  // FIX: Sort by partNumber instead of 'id' which might be missing in type def
+  allChunks.sort((a, b) => a.partNumber - b.partNumber);
 
   for (const chunk of allChunks) {
-    buffer.push({ blob: chunk.blob, id: chunk.id! });
+    // FIX: Push partNumber as id
+    buffer.push({ blob: chunk.blob, id: chunk.partNumber });
     bufferSize += chunk.blob.size;
 
     if (bufferSize >= MIN_PART_SIZE) {
       const etags = buffer.map(b => 
-        allChunks.find(c => c.id === b.id)?.etag
+        // FIX: Compare against partNumber
+        allChunks.find(c => c.partNumber === b.id)?.etag
       ).filter(Boolean);
 
       const uniqueTags = [...new Set(etags)];
