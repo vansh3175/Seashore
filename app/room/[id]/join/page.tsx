@@ -208,17 +208,7 @@ function ActiveSession({
       {isHost && (
         <div className="absolute top-4 left-4 z-50 flex items-center gap-3">
 
-          {/* 🔴 STATUS */}
-          <div className="flex items-center gap-2 text-xs font-mono text-white/80">
-            <span
-              className={`w-2 h-2 rounded-full ${
-                isRecording ? "bg-red-500 animate-pulse" : "bg-green-500"
-              }`}
-            />
-            <span className="uppercase tracking-wider">
-              {isRecording ? "Recording" : uploadStatus === "Idle" ? "Ready" : uploadStatus}
-            </span>
-          </div>
+          
 
           {/* 🎙️ RECORD */}
           <button
