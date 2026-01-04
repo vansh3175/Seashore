@@ -19,7 +19,8 @@ interface SeaShoreDB extends DBSchema {
     key: number; // Auto-incrementing ID
     value: {
       sessionId: string; // Link to parent recording
-      partNumber: number; // 1, 2, 3... (Order matters for S3)
+      sequenceId: number; // Unique sequence ID of this chunk (for recovery identification)
+      partNumber: number; // Part for sorting/uploading (same as sequenceId initially)
       blob: Blob;
       status: 'pending' | 'uploaded'; 
       etag?: string; // S3 Receipt (Only exists if status === 'uploaded')
@@ -78,18 +79,19 @@ export async function initRecordingInDB(sessionId: string, uploadId: string, s3K
 }
 
 // 4. Helper: Save a Chunk (Linked to Session ID)
-export async function saveChunkToDB(sessionId: string, partNumber: number, blob: Blob) {
+export async function saveChunkToDB(sessionId: string, sequenceId: number, blob: Blob) {
   const db = await initDB();
   await db.add('chunks', {
     sessionId,
-    partNumber,
+    partNumber: sequenceId, // Store sequence ID as partNumber for sorting
+    sequenceId,
     blob,
     status: 'pending',
   });
 }
 
 // 5. Helper: Mark Chunk as Uploaded (Save ETag)
-export async function markChunkUploaded(sessionId: string, partNumber: number, etag: string) {
+export async function markChunkUploaded(sessionId: string, sequenceId: number, etag: string) {
   const db = await initDB();
   const tx = db.transaction('chunks', 'readwrite');
   const index = tx.store.index('by-session');
@@ -97,7 +99,7 @@ export async function markChunkUploaded(sessionId: string, partNumber: number, e
   let cursor = await index.openCursor(IDBKeyRange.only(sessionId));
   
   while (cursor) {
-    if (cursor.value.partNumber === partNumber) {
+    if (cursor.value.sequenceId === sequenceId) {
       const updateData = cursor.value;
       updateData.status = 'uploaded';
       updateData.etag = etag;
