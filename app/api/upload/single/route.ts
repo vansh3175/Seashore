@@ -12,20 +12,19 @@ export async function PUT(req: NextRequest) {
     const body = await req.arrayBuffer();
     const buffer = Buffer.from(body);
 
-    const params = req.nextUrl.searchParams;
-
-    const studioId = params.get("studioId");
-    const sessionId = params.get("sessionId");
-    const userId = params.get("userId");
-    const recordingId = params.get("recordingId");
-    const type = params.get("type");
-    const startedAt = params.get("startedAt");
-    const endedAt = params.get("endedAt");
-    const duration = params.get("duration");
+    const { searchParams } = req.nextUrl;
+    const studioId = searchParams.get("studioId");
+    const sessionId = searchParams.get("sessionId");
+    const userId = searchParams.get("userId");
+    const recordingId = searchParams.get("recordingId");
+    const type = searchParams.get("type");
+    const startedAt = searchParams.get("startedAt");
+    const endedAt = searchParams.get("endedAt");
+    const duration = searchParams.get("duration");
 
     if (!studioId || !sessionId || !userId || !recordingId) {
       return NextResponse.json(
-        { error: "Missing metadata" },
+        { error: "Missing metadata query params" },
         { status: 400 }
       );
     }
@@ -50,17 +49,37 @@ export async function PUT(req: NextRequest) {
 
     const fileSize = Number(head.ContentLength || buffer.length);
 
-    await prisma.recording.update({
-      where: { id: recordingId },
-      data: {
-        fileSize,
-        duration: duration ? Number(duration) : undefined,
-        startedAt: startedAt ? new Date(startedAt) : undefined,
-        endedAt: endedAt ? new Date(endedAt) : new Date(),
-        status: "available",
-        s3Key: key
-      }
+    // If it was a small file, the DB row might not exist yet (because INIT creates it).
+    // We try to update, if fail, we create.
+    
+    // However, finding the correct participant is needed for creation.
+    // Assuming standard flow:
+    const participant = await prisma.participant.findFirst({
+        where: { sessionId: sessionId, identity: userId }
     });
+
+    if (participant) {
+        // Upsert logic for recording
+        // We use the 'sessionId' passed as recordingId in the query if no UUID exists yet
+        // But cleaner is to let Prisma handle ID gen if creating.
+        
+        // Check if recording exists by ID (if we have one) OR create new
+        // Since single upload didn't do INIT, we likely need to create.
+        await prisma.recording.create({
+            data: {
+                id: recordingId, // If we passed a UUID. If not, omit this.
+                participantId: participant.id,
+                sessionId,
+                type: type || "camera",
+                status: "available",
+                startedAt: startedAt ? new Date(startedAt) : new Date(),
+                endedAt: endedAt ? new Date(endedAt) : new Date(),
+                duration: Number(duration || 0),
+                fileSize,
+                s3Key: key
+            }
+        });
+    }
 
     return NextResponse.json({
       location: key,
