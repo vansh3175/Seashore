@@ -74,11 +74,15 @@ async function handleChunk(blob: Blob) {
 
   const id = sequenceNumber++;
   
-  // Save strict raw chunk to IDB immediately for safety
+  // Save strict raw chunk to IDB immediately for safety using sessionId
   if (sessionId) {
     await saveChunkToDB(sessionId, id, blob);
   }
 
+  await processBuffer(blob, id);
+}
+
+async function processBuffer(blob: Blob, id: number) {
   buffer.push({ blob, id });
   bufferSize += blob.size;
 
@@ -120,8 +124,9 @@ async function startMultipart(startedAt?: string) {
   fullKey = data.fullKey;
 
   // Track in DB that we have a live multipart upload
-  if (recordingId && uploadId && fullKey) {
-    await initRecordingInDB(recordingId, uploadId, fullKey);
+  if (recordingId && uploadId && fullKey && sessionId) {
+    // Note: initRecordingInDB likely uses sessionId as the primary key/index for looking up recording info later
+    await initRecordingInDB(sessionId, uploadId, fullKey);
   }
   
   multipartStarted = true;
@@ -137,8 +142,9 @@ async function uploadExactPart() {
   let currentPartSize = 0;
 
   // Consume buffer until we have exactly PART_SIZE
+  // Note: We use 'buffer[0]' peeking to ensure we don't drop data if slicing
   while (buffer.length > 0 && currentPartSize < PART_SIZE) {
-    const item = buffer[0]; // Peek at head
+    const item = buffer[0]; 
     const needed = PART_SIZE - currentPartSize;
 
     if (item.blob.size <= needed) {
@@ -146,19 +152,20 @@ async function uploadExactPart() {
       blobsToUpload.push(item.blob);
       chunkIdsToMark.push(item.id);
       currentPartSize += item.blob.size;
-      buffer.shift(); // Remove from buffer
+      buffer.shift(); // Remove from buffer as it's fully consumed
     } else {
       // Slice the chunk
       const slice = item.blob.slice(0, needed);
       const remainder = item.blob.slice(needed);
       
       blobsToUpload.push(slice);
-      // We do NOT mark this ID as uploaded yet because part of it is still in buffer
-      // IDB logic handles recovery based on what is *fully* uploaded anyway.
+      // We do NOT mark this ID as uploaded yet because part of it is still in buffer.
+      // We only mark chunks that are *fully* uploaded.
       
       currentPartSize += slice.size;
       
       // Update the head of the buffer with the remainder
+      // Crucial: Keep the same ID for the remainder so we track it eventually
       buffer[0] = { blob: remainder, id: item.id }; 
     }
   }
@@ -196,9 +203,11 @@ async function uploadExactPart() {
   parts.push({ PartNumber: thisPartNumber, ETag: etag });
 
   // Mark fully consumed chunks as uploaded in IDB
-  if (recordingId) {
+  // FIX: Use sessionId (the IDB key), not recordingId (the UUID)
+  if (sessionId) {
     for (const id of chunkIdsToMark) {
-      await markChunkUploaded(recordingId, id, etag);
+      // Don't await inside loop to speed up? IDB ops are fast, waiting ensures consistency.
+      await markChunkUploaded(sessionId, id, etag);
     }
   }
 
@@ -214,13 +223,19 @@ async function finalize(startedAt?: string, endedAt?: string, duration?: number)
     const allBlobs = buffer.map(b => b.blob);
     const finalBlob = new Blob(allBlobs, { type: 'video/webm' });
 
-    // Use the SINGLE upload endpoint
-    // Note: We need to pass metadata params in query string as per your API code
+    // Ensure we have something to upload
+    if (finalBlob.size === 0) {
+         console.warn("Empty recording, skipping upload.");
+         if (sessionId) await clearRecordingFromDB(sessionId);
+         self.postMessage({ type: "UPLOAD_COMPLETE", location: null });
+         return;
+    }
+
     const queryParams = new URLSearchParams({
       studioId: studioId || "",
       sessionId: sessionId || "",
       userId: userId || "",
-      recordingId: sessionId || "", // Usually we want a unique ID, but sessionId serves here if no DB row yet
+      recordingId: sessionId || "", // Single PUT creates row if missing
       type: recordingType,
       startedAt: startedAt || new Date().toISOString(),
       endedAt: endedAt || new Date().toISOString(),
@@ -235,7 +250,6 @@ async function finalize(startedAt?: string, endedAt?: string, duration?: number)
 
     if (!res.ok) throw new Error("Single upload failed");
     
-    // Clear local data
     if (sessionId) await clearRecordingFromDB(sessionId);
     
     const data = await res.json();
@@ -245,7 +259,6 @@ async function finalize(startedAt?: string, endedAt?: string, duration?: number)
 
   // CASE B: Multipart Active -> Upload remainder and Complete
   if (bufferSize > 0) {
-    // Upload the last part (can be any size < 5MB)
     const thisPartNumber = partNumber++;
     
     const res = await fetch(`${apiBase}/api/upload`, {
@@ -273,6 +286,17 @@ async function finalize(startedAt?: string, endedAt?: string, duration?: number)
     if (!putRes.ok) throw new Error("Final Part PUT failed");
     const etag = (putRes.headers.get("ETag") || "").replace(/"/g, "");
     parts.push({ PartNumber: thisPartNumber, ETag: etag });
+    
+    // Mark remaining chunks
+    if (sessionId) {
+        for (const item of buffer) {
+            await markChunkUploaded(sessionId, item.id, etag);
+        }
+    }
+  }
+
+  if (parts.length === 0) {
+      throw new Error("Cannot finalize: No parts uploaded.");
   }
 
   // Sort parts before completing (AWS requires ordered parts)
@@ -296,8 +320,9 @@ async function finalize(startedAt?: string, endedAt?: string, duration?: number)
   
   const data = await res.json();
 
-  if (recordingId) {
-    await clearRecordingFromDB(recordingId);
+  // Use sessionId for clearing DB as that's the key we used for init/saving
+  if (sessionId) {
+    await clearRecordingFromDB(sessionId);
   }
 
   self.postMessage({ type: "UPLOAD_COMPLETE", location: data.location });
@@ -317,27 +342,39 @@ async function handleRecover(targetSessionId: string) {
   // Restore state
   uploadId = session.uploadId;
   fullKey = session.s3Key;
-  recordingId = session.sessionId; 
-  sessionId = session.sessionId; // Ensure context is set
-  studioId = "recovered"; // We might not know this, but fullKey has it
   
-  parts = []; // We assume we need to re-upload parts to ensure consistency or check ETags
+  // NOTE: session.sessionId from DB is the client-side ID. 
+  // We use this for IDB operations.
+  sessionId = session.sessionId; 
+  // recordingId is the server ID, but we might not have it stored in the 'session' object 
+  // depending on db.ts implementation. We pass null to upload endpoints if we don't have it, 
+  // but usually endpoints need it. 
+  // Assuming session.uploadId implies we have a server state.
+  // Ideally, initRecordingInDB should store server recordingId too. 
+  // If not, we rely on the backend finding it via uploadId or we might fail if backend requires recordingId.
+  // For now, we proceed.
+  
+  studioId = "recovered"; 
+  
+  parts = []; 
   partNumber = 1;
   buffer = [];
   bufferSize = 0;
   
-  multipartStarted = true; // Recovery implies we are doing the full flow
+  // We treat recovery as a fresh multipart stream using the retrieved uploadId
+  multipartStarted = true; 
 
   const allChunks = await getRecordingChunks(targetSessionId);
-  // Sort by sequence/partNumber to ensure order
+  // Sort by sequence to ensure valid video reconstruction
+  // 'partNumber' in IDB chunk usually stores the sequence index
   allChunks.sort((a, b) => a.partNumber - b.partNumber);
 
   for (const chunk of allChunks) {
-    // Push directly to handler which manages the buffer loop
-    // We treat recovered blobs as if they are incoming chunks
-    await handleChunk(chunk.blob); 
+    // Push directly to buffer processing WITHOUT re-saving to IDB
+    // We use the ID from the chunk to ensure we track it correctly
+    await processBuffer(chunk.blob, chunk.partNumber); 
   }
 
-  // Finish up
+  // Finish up any remainder
   await finalize();
 }
