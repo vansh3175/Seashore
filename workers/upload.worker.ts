@@ -35,6 +35,15 @@ let sequenceNumber = 1;
 // Queue to serialize operations
 let taskQueue: Promise<void> = Promise.resolve();
 
+// Helper to safely extract error message
+function getSafeErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object" && err !== null && "message" in err) {
+    return String((err as any).message);
+  }
+  return String(err);
+}
+
 self.onmessage = (e: MessageEvent) => {
   const { type, payload } = e.data;
 
@@ -44,9 +53,6 @@ self.onmessage = (e: MessageEvent) => {
     userId = payload.userId;
     apiBase = payload.apiBase;
     recordingType = payload.recordingType || "camera"; 
-    
-    // We don't start multipart immediately. We wait until we have > 5MB 
-    // or until finalize is called (for single PUT).
   } 
   else if (type === "ADD_CHUNK") {
     taskQueue = taskQueue.then(() => handleChunk(payload.blob));
@@ -62,7 +68,7 @@ self.onmessage = (e: MessageEvent) => {
   }
 
   taskQueue = taskQueue.catch((err: any) => {
-    self.postMessage({ type: "ERROR", error: err?.message || String(err) });
+    self.postMessage({ type: "ERROR", error: getSafeErrorMessage(err) });
   });
 };
 
@@ -74,7 +80,6 @@ async function handleChunk(blob: Blob) {
 
   const id = sequenceNumber++;
   
-  // Save strict raw chunk to IDB immediately for safety using sessionId
   if (sessionId) {
     await saveChunkToDB(sessionId, id, blob);
   }
@@ -86,12 +91,10 @@ async function processBuffer(blob: Blob, id: number) {
   buffer.push({ blob, id });
   bufferSize += blob.size;
 
-  // Start multipart only if we haven't yet, and we have enough data
   if (!multipartStarted && bufferSize >= PART_SIZE) {
     await startMultipart();
   }
 
-  // If multipart is active, upload any full 5MB parts we can form
   if (multipartStarted) {
     while (bufferSize >= PART_SIZE) {
       await uploadExactPart();
@@ -123,7 +126,6 @@ async function startMultipart(startedAt?: string) {
   recordingId = data.recordingId;
   fullKey = data.fullKey;
 
-  // Track in DB that we have a live multipart upload
   if (recordingId && uploadId && fullKey && sessionId) {
     await initRecordingInDB(sessionId, uploadId, fullKey);
   }
@@ -133,40 +135,34 @@ async function startMultipart(startedAt?: string) {
 }
 
 // ----------------------------------------------
-// 3️⃣ UPLOAD EXACT 5MB PART (The Slicing Logic)
+// 3️⃣ UPLOAD EXACT 5MB PART
 // ----------------------------------------------
 async function uploadExactPart() {
   const blobsToUpload: Blob[] = [];
   const chunkIdsToMark: number[] = [];
   let currentPartSize = 0;
 
-  // Consume buffer until we have exactly PART_SIZE
   while (buffer.length > 0 && currentPartSize < PART_SIZE) {
     const item = buffer[0]; 
     const needed = PART_SIZE - currentPartSize;
 
     if (item.blob.size <= needed) {
-      // Take the whole chunk
       blobsToUpload.push(item.blob);
       chunkIdsToMark.push(item.id);
       currentPartSize += item.blob.size;
       buffer.shift(); 
     } else {
-      // Slice the chunk
       const slice = item.blob.slice(0, needed);
       const remainder = item.blob.slice(needed);
       
       blobsToUpload.push(slice);
       currentPartSize += slice.size;
-      
-      // Update the head of the buffer with the remainder
       buffer[0] = { blob: remainder, id: item.id }; 
     }
   }
 
   bufferSize -= PART_SIZE;
 
-  // --- Perform Upload ---
   const thisPartNumber = partNumber++;
   
   const res = await fetch(`${apiBase}/api/upload`, {
@@ -186,34 +182,46 @@ async function uploadExactPart() {
 
   const compositeBlob = new Blob(blobsToUpload);
   
-  // RETRY LOGIC for S3 PUT
-  let putRes: Response | undefined;
-  let lastError: any;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  // --- ROBUST RETRY LOGIC (5 Attempts) ---
+  let putRes;
+  let lastError: unknown;
+  const maxAttempts = 5;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       putRes = await fetch(signedUrl, {
         method: "PUT",
         body: compositeBlob
       });
+      
       if (putRes.ok) break;
-      // If server error, throw to catch block to retry
-      if (putRes.status >= 500) throw new Error(`Status ${putRes.status}`);
-      // If client error (4xx), it might be permanent, but retry once just in case
-      if (putRes.status >= 400) throw new Error(`Status ${putRes.status}`);
+      
+      if (putRes.status >= 500 || putRes.status === 429) {
+        throw new Error(`Server Error: ${putRes.status}`);
+      }
+      if (putRes.status >= 400) {
+        // Client error (like 403) usually shouldn't be retried, but we do once just in case of slight clock skew
+         throw new Error(`Client Error: ${putRes.status}`);
+      }
+
     } catch (err) {
       lastError = err;
-      if (attempt < 2) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+      const delay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s, 8s, 16s
+      console.warn(`[UploadWorker] Part ${thisPartNumber} attempt ${attempt + 1} failed. Retrying in ${delay}ms...`, err);
+      if (attempt < maxAttempts - 1) {
+        await new Promise(r => setTimeout(r, delay));
+      }
     }
   }
 
   if (!putRes || !putRes.ok) {
-     throw new Error(`PUT Part ${thisPartNumber} failed after 3 attempts: ${lastError?.message || putRes?.statusText}`);
+     const msg = getSafeErrorMessage(lastError) || putRes?.statusText || "Unknown Error";
+     throw new Error(`PUT Part ${thisPartNumber} failed after ${maxAttempts} attempts: ${msg}`);
   }
 
   const etag = (putRes.headers.get("ETag") || "").replace(/"/g, "");
   parts.push({ PartNumber: thisPartNumber, ETag: etag });
 
-  // Mark fully consumed chunks as uploaded in IDB
   if (sessionId) {
     for (const id of chunkIdsToMark) {
       await markChunkUploaded(sessionId, id, etag);
@@ -227,7 +235,7 @@ async function uploadExactPart() {
 // 4️⃣ FINALIZE
 // ----------------------------------------------
 async function finalize(startedAt?: string, endedAt?: string, duration?: number) {
-  // CASE A: Small file (never triggered multipart) -> Single PUT
+  // CASE A: Single PUT
   if (!multipartStarted) {
     const allBlobs = buffer.map(b => b.blob);
     const finalBlob = new Blob(allBlobs, { type: 'video/webm' });
@@ -265,7 +273,7 @@ async function finalize(startedAt?: string, endedAt?: string, duration?: number)
     return;
   }
 
-  // CASE B: Multipart Active -> Upload remainder and Complete
+  // CASE B: Multipart Final Part
   if (bufferSize > 0) {
     const thisPartNumber = partNumber++;
     
@@ -286,32 +294,40 @@ async function finalize(startedAt?: string, endedAt?: string, duration?: number)
 
     const finalBlob = new Blob(buffer.map(b => b.blob));
     
-    // RETRY LOGIC for FINAL PUT
-    let putRes: Response | undefined;
-    let lastError: any;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // --- ROBUST RETRY LOGIC (5 Attempts) for Final Part ---
+    let putRes;
+    let lastError: unknown;
+    const maxAttempts = 5;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
             putRes = await fetch(signedUrl, {
                 method: "PUT",
                 body: finalBlob
             });
+            
             if (putRes.ok) break;
-            throw new Error(`Status ${putRes.status}`);
+            
+            if (putRes.status >= 500) throw new Error(`Status ${putRes.status}`);
+            if (putRes.status >= 400) throw new Error(`Status ${putRes.status}`);
         } catch (err) {
             lastError = err;
-            console.warn(`Final part upload attempt ${attempt + 1} failed`, err);
-            if (attempt < 2) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+            const delay = 1000 * Math.pow(2, attempt);
+            console.warn(`[UploadWorker] Final Part attempt ${attempt + 1} failed. Retrying in ${delay}ms...`, err);
+            if (attempt < maxAttempts - 1) {
+                await new Promise(r => setTimeout(r, delay));
+            }
         }
     }
 
     if (!putRes || !putRes.ok) {
-        throw new Error(`Final Part PUT failed after 3 attempts: ${lastError?.message || putRes?.statusText}`);
+        const msg = getSafeErrorMessage(lastError) || putRes?.statusText || "Unknown Error";
+        throw new Error(`Final Part PUT failed after ${maxAttempts} attempts: ${msg}`);
     }
 
     const etag = (putRes.headers.get("ETag") || "").replace(/"/g, "");
     parts.push({ PartNumber: thisPartNumber, ETag: etag });
     
-    // Mark remaining chunks
     if (sessionId) {
         for (const item of buffer) {
             await markChunkUploaded(sessionId, item.id, etag);
@@ -323,7 +339,6 @@ async function finalize(startedAt?: string, endedAt?: string, duration?: number)
       throw new Error("Cannot finalize: No parts uploaded.");
   }
 
-  // Sort parts before completing (AWS requires ordered parts)
   parts.sort((a, b) => a.PartNumber - b.PartNumber);
 
   const res = await fetch(`${apiBase}/api/upload`, {
@@ -362,7 +377,6 @@ async function handleRecover(targetSessionId: string) {
     throw new Error("No local recovery data found.");
   }
 
-  // Restore state
   uploadId = session.uploadId;
   fullKey = session.s3Key;
   sessionId = session.sessionId; 
