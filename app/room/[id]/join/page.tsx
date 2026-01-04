@@ -206,63 +206,47 @@ function ActiveSession({
       </VideoConference>
       
       {isHost && (
-        <div className="absolute top-6 right-6 z-50 flex items-center gap-3">
-            
-            {/* Status Pill */}
-            <div className={`
-                flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border transition-all duration-300
-                ${isRecording 
-                    ? 'bg-red-950/50 border-red-500/30 text-red-200 shadow-red-900/20 shadow-lg' 
-                    : 'bg-black/40 border-white/10 text-gray-400'}
-            `}>
-                <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-500'}`} />
-                <span className="text-xs font-mono font-bold uppercase tracking-wider">
-                    {isRecording ? 'Recording' : uploadStatus === 'Idle' ? 'Ready' : uploadStatus}
-                </span>
-            </div>
+  <div className="absolute top-4 left-4 z-50 flex items-center gap-2">
 
-            {/* Separator line for visual grouping */}
-            <div className="w-px h-6 bg-white/10 mx-1" />
-
-            {/* 🎙️ RECORD BUTTON */}
-            <button
-                disabled={!isConnected || !recStream}
-                onClick={isRecording ? stopRecording : startRecording}
-                className={`
-                    group relative w-12 h-12 rounded-full flex items-center justify-center 
-                    transition-all duration-300 shadow-xl border
-                    disabled:opacity-50 disabled:cursor-not-allowed
-                    ${isRecording 
-                        ? 'bg-white border-white hover:scale-105' 
-                        : 'bg-red-600 border-red-500 hover:bg-red-700 hover:scale-105'}
-                `}
-                title={isRecording ? "Stop Recording" : "Start Recording"}
-            >
-                {/* Inner Icon */}
-                <div className={`
-                    transition-all duration-300
-                    ${isRecording 
-                        ? 'w-4 h-4 rounded-sm bg-red-600' 
-                        : 'w-4 h-4 rounded-full bg-white group-hover:scale-110'}
-                `} />
-            </button>
-
-             {/* ⛔ END SESSION */}
-            <button
-                onClick={handleEndSession}
-                disabled={!isConnected}
-                className="w-12 h-12 rounded-full bg-gray-900/60 border border-white/10 text-white 
-                hover:bg-red-600/90 hover:border-red-500 hover:text-white
-                transition-all duration-300 flex items-center justify-center shadow-lg group ml-1"
-                title="End Session"
-            >
-                <div className='w-fit h-fit p-2 bg-red-600 rounded-full group-hover:scale-110 transition-all duration-300'>
-                  <Power size={12}  />
-                  End
-                </div>
-            </button>
-        </div>
+    {/* 🎙️ RECORD */}
+    <button
+      disabled={!isConnected || !recStream}
+      onClick={isRecording ? stopRecording : startRecording}
+      className={`
+        flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium
+        border transition-all duration-200
+        disabled:opacity-50 disabled:cursor-not-allowed
+        ${isRecording
+          ? "bg-red-600 border-red-500 text-white"
+          : "bg-black/60 border-white/10 text-white hover:bg-red-600"}
+      `}
+    >
+      {isRecording ? (
+        <div className="w-2.5 h-2.5 bg-white rounded-sm" />
+      ) : (
+        <div className="w-2.5 h-2.5 bg-red-500 rounded-full" />
       )}
+      {isRecording ? "Stop" : "Record"}
+    </button>
+
+    {/* ⛔ END */}
+    <button
+      onClick={handleEndSession}
+      disabled={!isConnected}
+      className="
+        flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium
+        bg-black/60 border border-white/10 text-white
+        hover:bg-red-600 transition-all duration-200
+        disabled:opacity-50 disabled:cursor-not-allowed
+      "
+    >
+      <Power size={12} />
+      End
+    </button>
+
+  </div>
+)}
+
     </div>
   );
 }
