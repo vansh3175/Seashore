@@ -12,16 +12,16 @@ export async function PUT(req: NextRequest) {
     const body = await req.arrayBuffer();
     const buffer = Buffer.from(body);
 
-    const {
-      studioId,
-      sessionId,
-      userId,
-      recordingId,
-      type,
-      startedAt,
-      endedAt,
-      duration
-    } = req.nextUrl.searchParams as any;
+    const params = req.nextUrl.searchParams;
+
+    const studioId = params.get("studioId");
+    const sessionId = params.get("sessionId");
+    const userId = params.get("userId");
+    const recordingId = params.get("recordingId");
+    const type = params.get("type");
+    const startedAt = params.get("startedAt");
+    const endedAt = params.get("endedAt");
+    const duration = params.get("duration");
 
     if (!studioId || !sessionId || !userId || !recordingId) {
       return NextResponse.json(
@@ -54,7 +54,7 @@ export async function PUT(req: NextRequest) {
       where: { id: recordingId },
       data: {
         fileSize,
-        duration,
+        duration: duration ? Number(duration) : undefined,
         startedAt: startedAt ? new Date(startedAt) : undefined,
         endedAt: endedAt ? new Date(endedAt) : new Date(),
         status: "available",
