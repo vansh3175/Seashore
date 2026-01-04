@@ -206,7 +206,7 @@ function ActiveSession({
       </VideoConference>
       
       {isHost && (
-        <div className="absolute top-4 left-4 z-50 flex items-center gap-3">
+        <div className="absolute top-4 right-4 z-50 flex items-center gap-3">
 
           
 
