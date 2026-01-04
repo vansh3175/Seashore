@@ -251,12 +251,15 @@ function ActiveSession({
             <button
                 onClick={handleEndSession}
                 disabled={!isConnected}
-                className="w-12 h-12 rounded-full bg-gray-900/60 backdrop-blur-md border border-white/10 text-white 
+                className="w-12 h-12 rounded-full bg-gray-900/60 border border-white/10 text-white 
                 hover:bg-red-600/90 hover:border-red-500 hover:text-white
                 transition-all duration-300 flex items-center justify-center shadow-lg group ml-1"
                 title="End Session"
             >
-                <Power size={18} className="text-current group-hover:scale-110 transition-transform" />
+                <div className='w-fit h-fit p-2 bg-red-600 rounded-full group-hover:scale-110 transition-all duration-300'>
+                  <Power size={12}  />
+                  End
+                </div>
             </button>
         </div>
       )}
