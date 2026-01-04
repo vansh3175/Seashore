@@ -204,48 +204,62 @@ function ActiveSession({
           {/* ScreenShareButton intentionally removed */}
         </ControlBar>
       </VideoConference>
+      
       {isHost && (
-      <div className="absolute top-1/2 left-4 -translate-y-1/2 z-50 flex flex-col gap-4">
-        
-        {/* 🎙️ RECORD BUTTON */}
-        <button
-          disabled={!isConnected || !recStream}
-          onClick={isRecording ? stopRecording : startRecording}
-          className={`group relative w-14 h-14 rounded-full flex items-center justify-center
-            transition-all duration-300 shadow-xl
-            disabled:opacity-40 disabled:cursor-not-allowed
-            ${isRecording 
-              ? 'bg-red-600 hover:bg-red-700 animate-pulse' 
-              : 'bg-white hover:bg-gray-200'}
-          `}
-        >
-          <div className="absolute inset-0 rounded-full ring-2 ring-white/30 group-hover:ring-white/60 transition" />
-          <span className="text-xs font-black tracking-widest text-black">
-            {isRecording ? 'REC' : 'REC'}
-          </span>
-        </button>
+        <div className="absolute top-6 right-6 z-50 flex items-center gap-3">
+            
+            {/* Status Pill */}
+            <div className={`
+                flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md border transition-all duration-300
+                ${isRecording 
+                    ? 'bg-red-950/50 border-red-500/30 text-red-200 shadow-red-900/20 shadow-lg' 
+                    : 'bg-black/40 border-white/10 text-gray-400'}
+            `}>
+                <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-500'}`} />
+                <span className="text-xs font-mono font-bold uppercase tracking-wider">
+                    {isRecording ? 'Recording' : uploadStatus === 'Idle' ? 'Ready' : uploadStatus}
+                </span>
+            </div>
 
-        {/* 🔴 RECORD STATUS */}
-        <div className="text-[10px] text-center font-mono text-gray-400">
-          {isRecording ? 'RECORDING' : uploadStatus}
+            {/* Separator line for visual grouping */}
+            <div className="w-px h-6 bg-white/10 mx-1" />
+
+            {/* 🎙️ RECORD BUTTON */}
+            <button
+                disabled={!isConnected || !recStream}
+                onClick={isRecording ? stopRecording : startRecording}
+                className={`
+                    group relative w-12 h-12 rounded-full flex items-center justify-center 
+                    transition-all duration-300 shadow-xl border
+                    disabled:opacity-50 disabled:cursor-not-allowed
+                    ${isRecording 
+                        ? 'bg-white border-white hover:scale-105' 
+                        : 'bg-red-600 border-red-500 hover:bg-red-700 hover:scale-105'}
+                `}
+                title={isRecording ? "Stop Recording" : "Start Recording"}
+            >
+                {/* Inner Icon */}
+                <div className={`
+                    transition-all duration-300
+                    ${isRecording 
+                        ? 'w-4 h-4 rounded-sm bg-red-600' 
+                        : 'w-4 h-4 rounded-full bg-white group-hover:scale-110'}
+                `} />
+            </button>
+
+             {/* ⛔ END SESSION */}
+            <button
+                onClick={handleEndSession}
+                disabled={!isConnected}
+                className="w-12 h-12 rounded-full bg-gray-900/60 backdrop-blur-md border border-white/10 text-white 
+                hover:bg-red-600/90 hover:border-red-500 hover:text-white
+                transition-all duration-300 flex items-center justify-center shadow-lg group ml-1"
+                title="End Session"
+            >
+                <Power size={18} className="text-current group-hover:scale-110 transition-transform" />
+            </button>
         </div>
-
-        {/* ⛔ END SESSION */}
-        <button
-          onClick={handleEndSession}
-          disabled={!isConnected}
-          className="mt-6 w-14 h-14 rounded-full bg-red-950/60 
-            border border-red-800/50 text-red-300
-            hover:bg-red-900 hover:text-white
-            transition-all shadow-lg"
-          title="End Session"
-        >
-          <Power size={18} />
-        </button>
-
-      </div>
-    )}
-
+      )}
     </div>
   );
 }
