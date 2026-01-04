@@ -187,7 +187,7 @@ async function uploadExactPart() {
   const compositeBlob = new Blob(blobsToUpload);
   
   // RETRY LOGIC for S3 PUT
-  let putRes;
+  let putRes: Response | undefined;
   let lastError: any;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -287,7 +287,7 @@ async function finalize(startedAt?: string, endedAt?: string, duration?: number)
     const finalBlob = new Blob(buffer.map(b => b.blob));
     
     // RETRY LOGIC for FINAL PUT
-    let putRes;
+    let putRes: Response | undefined;
     let lastError: any;
     for (let attempt = 0; attempt < 3; attempt++) {
         try {
