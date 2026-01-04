@@ -18,12 +18,11 @@ export default function GlobalRecovery() {
     const scanDB = async () => {
       try {
         const sessions = await getPendingRecordings();
-        console.log("[GlobalRecovery] Pending sessions found:", sessions);
         if (sessions.length > 0) {
           setPendingSessions(sessions);
         }
       } catch (e) {
-        console.error("[GlobalRecovery] Failed to scan IDB:", e);
+        // Failed to scan IDB
       }
     };
 
@@ -34,21 +33,18 @@ export default function GlobalRecovery() {
   // 2. Worker Lifecycle Management
   useEffect(() => {
     if (isRecovering && pendingSessions.length > 0 && !workerRef.current) {
-      console.log("[GlobalRecovery] Initializing Recovery Worker...");
       
       // Initialize Worker
       workerRef.current = new Worker(new URL('@/workers/upload.worker.ts', import.meta.url));
       
       workerRef.current.onmessage = (e) => {
         const { type, partNumber, error } = e.data;
-        console.log("[GlobalRecovery] Worker Message:", type, partNumber || '');
 
         if (type === 'PART_UPLOADED' || type === 'PART_RECOVERED') {
           setCurrentPart(prev => prev + 1);
         }
 
         if (type === 'UPLOAD_COMPLETE') {
-          console.log("[GlobalRecovery] Session Finalized.");
           // One session done. Remove it from the list.
           setPendingSessions(prev => {
             const remaining = prev.slice(1);
@@ -66,7 +62,6 @@ export default function GlobalRecovery() {
         }
 
         if (type === 'ERROR') {
-          console.error("[GlobalRecovery] Recovery Error:", error);
           setStatus('error');
           setErrorMessage(error || 'Unknown upload error');
           setIsRecovering(false);
@@ -88,7 +83,6 @@ export default function GlobalRecovery() {
 
   const triggerWorkerForSession = (session: any) => {
     if (!workerRef.current) return;
-    console.log("[GlobalRecovery] Triggering RECOVER for session:", session.sessionId);
     setCurrentPart(0);
     workerRef.current.postMessage({
       type: 'RECOVER',
@@ -197,7 +191,7 @@ export default function GlobalRecovery() {
                 onClick={closeDialog}
                 className="w-full py-3 rounded-xl bg-green-600 hover:bg-green-500 text-white font-bold transition-all shadow-lg shadow-green-900/20"
               >
-                Continue to Dashboard
+                Continue to Studio
               </button>
             </>
           )}

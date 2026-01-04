@@ -12,13 +12,13 @@ import {
 } from 'livekit-client';
 import { 
   LiveKitRoom, 
-  VideoConference, 
+  VideoConference,
+  ControlBar, 
   useRoomContext,
   useConnectionState, 
   useLocalParticipant, 
 } from '@livekit/components-react';
 import '@livekit/components-styles';
-// import { saveChunkToDB } from '@/utils/db'; // Ensure this path matches your project structure
 
 import { Inter } from 'next/font/google';
 import { 
@@ -85,11 +85,9 @@ function ActiveSession({
 
   // Debug Connection
   useEffect(() => {
-    console.log("📡 LiveKit Connection State:", connectionState);
     if (connectionState === ConnectionState.Connected) {
-      console.log("✅ LIVEKIT CONNECTED");
       if (room.name !== studioId) {
-        console.error("❌ CRITICAL: Room Name mismatch! API calls will fail.");
+        // Mismatch logic could go here if needed
       }
     }
   }, [connectionState, room.name, studioId]);
@@ -116,12 +114,9 @@ function ActiveSession({
     if (!room) return;
 
     const logDisconnect = () => {
-      console.log("Disconnected. Logging via keepalive fetch...");
-      
       let performRedirect = true;
 
       if (isRecording) {
-        console.warn("⚠️ Disconnected while recording! Stopping recorder to finalize file...");
         stopRecording(); 
         performRedirect = false; 
       }
@@ -141,7 +136,6 @@ function ActiveSession({
     };
 
     const handleRoomDisconnect = (reason?: any) => {
-        console.log("Room disconnected:", reason);
         logDisconnect();
     };
 
@@ -183,7 +177,7 @@ function ActiveSession({
         }
         setIsPublished(true);
       } catch (e: any) {
-        if (!e.message?.includes('already been published')) console.error("Failed to publish tracks:", e);
+        // Ignored
       } finally {
         publishingRef.current = false;
       }
@@ -205,34 +199,53 @@ function ActiveSession({
 
   return (
     <div className="relative w-full h-full bg-[#050810]">
-      <VideoConference />
+      <VideoConference>
+        <ControlBar>
+          {/* ScreenShareButton intentionally removed */}
+        </ControlBar>
+      </VideoConference>
       {isHost && (
-        <div className="absolute top-4 right-4 z-50 flex flex-col gap-2 items-end">
-          <div className="bg-gray-900 border border-gray-800 p-3 rounded-lg flex items-center gap-4 shadow-lg">
-              <div className="text-xs font-mono text-gray-400">
-                  <span className={`inline-block w-2 h-2 rounded-full mr-2 ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-600'}`}></span>
-                  {uploadStatus}
-              </div>
-              <button
-                disabled={!isConnected || !recStream}
-                onClick={isRecording ? stopRecording : startRecording}
-                className={`px-3 py-1.5 rounded text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed
-                  ${isRecording ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-white text-black hover:bg-gray-200'}`}
-              >
-                {!isConnected ? (
-                   <span className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> {getButtonText()}</span>
-                ) : (getButtonText())}
-              </button>
-          </div>
-          <button
-              onClick={handleEndSession}
-              disabled={!isConnected}
-              className="px-4 py-2 bg-red-950/50 hover:bg-red-900/80 text-red-200 border border-red-900/50 rounded-lg text-xs font-bold flex items-center gap-2 transition-all disabled:opacity-50"
-          >
-            <Power size={14} /> End Session
-          </button>
+      <div className="absolute top-1/2 left-4 -translate-y-1/2 z-50 flex flex-col gap-4">
+        
+        {/* 🎙️ RECORD BUTTON */}
+        <button
+          disabled={!isConnected || !recStream}
+          onClick={isRecording ? stopRecording : startRecording}
+          className={`group relative w-14 h-14 rounded-full flex items-center justify-center
+            transition-all duration-300 shadow-xl
+            disabled:opacity-40 disabled:cursor-not-allowed
+            ${isRecording 
+              ? 'bg-red-600 hover:bg-red-700 animate-pulse' 
+              : 'bg-white hover:bg-gray-200'}
+          `}
+        >
+          <div className="absolute inset-0 rounded-full ring-2 ring-white/30 group-hover:ring-white/60 transition" />
+          <span className="text-xs font-black tracking-widest text-black">
+            {isRecording ? 'REC' : 'REC'}
+          </span>
+        </button>
+
+        {/* 🔴 RECORD STATUS */}
+        <div className="text-[10px] text-center font-mono text-gray-400">
+          {isRecording ? 'RECORDING' : uploadStatus}
         </div>
-      )}
+
+        {/* ⛔ END SESSION */}
+        <button
+          onClick={handleEndSession}
+          disabled={!isConnected}
+          className="mt-6 w-14 h-14 rounded-full bg-red-950/60 
+            border border-red-800/50 text-red-300
+            hover:bg-red-900 hover:text-white
+            transition-all shadow-lg"
+          title="End Session"
+        >
+          <Power size={18} />
+        </button>
+
+      </div>
+    )}
+
     </div>
   );
 }
@@ -317,7 +330,6 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
       }
 
     } catch (err) {
-      console.error("Session check failed", err);
       setSessionStatus('error');
     } finally {
       setIsChecking(false);
@@ -345,7 +357,6 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
         setActiveStream(stream);
         setIsLoading(false);
       } catch (err) { 
-        console.error("Camera Error:", err); 
         setIsLoading(false);
       }
     };
@@ -400,7 +411,6 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
       setToken(data.token);
       setParticipantId(data.participantId);
     } catch (e: any) { 
-      console.error("Token Error:", e);
       setIsJoining(false);
       setConnectionError(e.message || "Failed to join room");
     }
@@ -414,7 +424,6 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
         if (res.status!=200) throw new Error("Failed to start");
         await handleJoin();
     } catch (e) {
-        console.error("Start Error:", e);
         setIsJoining(false);
         alert("Failed to start session");
     }
@@ -431,7 +440,6 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
         });
         window.location.href = `/studio/${studioId}`;
     } catch (e) {
-        console.error("End Error:", e);
         alert("Failed to end session");
     }
   }
@@ -448,13 +456,12 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
         })
       });
     } catch (err) {
-      console.error("Failed to toggle recording:", err);
+      // Ignored
     }
   };
 
   const startRecording = () => {
     if (!recordingStream || !workerRef.current) {
-        console.warn("Cannot start recording: Stream or Worker not ready");
         return;
     }
 
@@ -491,7 +498,6 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
     };
 
     const mimeType = getBestMimeType();
-    console.log(`🎙️ Starting recorder with mimeType: ${mimeType}`);
 
     const recorder = new MediaRecorder(recordingStream, {
       mimeType,
@@ -620,7 +626,7 @@ export default function StudioJoinPage({ params }: { params: Promise<{ id: strin
           serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
           data-lk-theme="default" style={{ height: '100vh' }}
           onError={(e) => {
-              console.error("LiveKit Room Error:", e);
+             // Ignored
           }}
         >
           <ActiveSession 
