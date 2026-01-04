@@ -206,46 +206,59 @@ function ActiveSession({
       </VideoConference>
       
       {isHost && (
-  <div className="absolute top-4 left-4 z-50 flex items-center gap-2">
+        <div className="absolute top-4 left-4 z-50 flex items-center gap-3">
 
-    {/* 🎙️ RECORD */}
-    <button
-      disabled={!isConnected || !recStream}
-      onClick={isRecording ? stopRecording : startRecording}
-      className={`
-        flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium
-        border transition-all duration-200
-        disabled:opacity-50 disabled:cursor-not-allowed
-        ${isRecording
-          ? "bg-red-600 border-red-500 text-white"
-          : "bg-black/60 border-white/10 text-white hover:bg-red-600"}
-      `}
-    >
-      {isRecording ? (
-        <div className="w-2.5 h-2.5 bg-white rounded-sm" />
-      ) : (
-        <div className="w-2.5 h-2.5 bg-red-500 rounded-full" />
+          {/* 🔴 STATUS */}
+          <div className="flex items-center gap-2 text-xs font-mono text-white/80">
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isRecording ? "bg-red-500 animate-pulse" : "bg-green-500"
+              }`}
+            />
+            <span className="uppercase tracking-wider">
+              {isRecording ? "Recording" : uploadStatus === "Idle" ? "Ready" : uploadStatus}
+            </span>
+          </div>
+
+          {/* 🎙️ RECORD */}
+          <button
+            disabled={!isConnected || !recStream}
+            onClick={isRecording ? stopRecording : startRecording}
+            className={`
+              flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium
+              border transition-all duration-200
+              disabled:opacity-50 disabled:cursor-not-allowed
+              ${isRecording
+                ? "bg-red-600 border-red-500 text-white"
+                : "bg-black/60 border-white/10 text-white hover:bg-red-600"}
+            `}
+          >
+            {isRecording ? (
+              <div className="w-2.5 h-2.5 bg-white rounded-sm" />
+            ) : (
+              <div className="w-2.5 h-2.5 bg-red-500 rounded-full" />
+            )}
+            {isRecording ? "Stop" : "Record"}
+          </button>
+
+          {/* ⛔ END */}
+          <button
+            onClick={handleEndSession}
+            disabled={!isConnected}
+            className="
+              flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium
+              bg-black/60 border border-white/10 text-white
+              hover:bg-red-600 transition-all duration-200
+              disabled:opacity-50 disabled:cursor-not-allowed
+            "
+          >
+            <Power size={12} />
+            End
+          </button>
+
+        </div>
       )}
-      {isRecording ? "Stop" : "Record"}
-    </button>
 
-    {/* ⛔ END */}
-    <button
-      onClick={handleEndSession}
-      disabled={!isConnected}
-      className="
-        flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium
-        bg-black/60 border border-white/10 text-white
-        hover:bg-red-600 transition-all duration-200
-        disabled:opacity-50 disabled:cursor-not-allowed
-      "
-    >
-      <Power size={12} />
-      End
-    </button>
-
-  </div>
-)}
 
     </div>
   );
