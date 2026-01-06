@@ -24,13 +24,13 @@ Sea Shore inverts this model:
 
 
 ![Studio Dashboard](/screenshots/studio.png)
-*Real-time studio dashboard with low-latency monitoring.*
-
-![Session View](/screenshots/session.png)
-*Active session view featuring connection and Meeting.*
+*Oversee all your studios from one unified workspace.*
 
 ![Greenroom](/screenshots/greenroom.png)
 *Greenroom / pre-show controls and device checks.*
+
+![Session View](/screenshots/session.png)
+*Live meeting session with connected participants.*
 
 ![Downloads](/screenshots/download.png)
 *Download the video feed for each participant .*
@@ -51,6 +51,17 @@ Leverages S3-compatible object storage with zero egress fees. The background wor
 
 ---
 
+## Recovery & Crash Resilience
+
+Sea Shore uses a local-first persistence model to avoid data loss during network failures or crashes:
+
+- Media chunks are buffered in **IndexedDB** (see `utils/db.ts`) as they are captured.
+- A dedicated background worker (`workers/upload.worker.ts`) uploads chunks in 5MB multipart parts to Cloudflare R2 and tracks progress in IDB.
+- If the browser or machine crashes, the app's `GlobalRecovery` component (`components/GlobalRecovery.tsx`) detects unfinished recordings on startup and allows the user to resume uploads. The worker will reassemble pending chunks and complete the multipart upload, ensuring no recorded data is lost.
+
+This combination of local buffering, durable metadata, and resumable multipart uploads provides robust failure recovery for long recordings.
+
+---
 ## Tech Stack 🛠️
 
 | Component | Technology | Role |
@@ -94,24 +105,3 @@ npm run dev
 
 ---
 
-## Recovery & Crash Resilience
-
-Sea Shore uses a local-first persistence model to avoid data loss during network failures or crashes:
-
-- Media chunks are buffered in **IndexedDB** (see `utils/db.ts`) as they are captured.
-- A dedicated background worker (`workers/upload.worker.ts`) uploads chunks in 5MB multipart parts to Cloudflare R2 and tracks progress in IDB.
-- If the browser or machine crashes, the app's `GlobalRecovery` component (`components/GlobalRecovery.tsx`) detects unfinished recordings on startup and allows the user to resume uploads. The worker will reassemble pending chunks and complete the multipart upload, ensuring no recorded data is lost.
-
-This combination of local buffering, durable metadata, and resumable multipart uploads provides robust failure recovery for long recordings.
-
----
-
-## Project Structure
-
-app/: Server-side Route Handlers & Server Components.
-
-workers/: Background processes for IndexedDB to R2 synchronization.
-
-lib/: Singletons for LiveKit SDK and S3 Client instantiation.
-
-prisma/: Schema definitions.
